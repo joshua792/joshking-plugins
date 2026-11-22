@@ -60,7 +60,7 @@ worked JerseyOps example with a `$comment` on every block. The shape:
 
 | Block | What it controls |
 |---|---|
-| `gate` | `lineThreshold`, `riskyPaths[]`, `uncounted[]` — the push gate |
+| `gate` | `lineThreshold`, `riskyPaths[]`, `riskyPatterns[]`, `uncounted[]`, `defaultRiskyPaths`, `defaultRiskyPatterns` — the push gate |
 | `commit` | commit `types[]`, `attribution` line |
 | `review` | `rulebook` — the file the architect treats as law |
 | `test` | `command`, `e2eCommand`, `baseline` |
@@ -78,23 +78,39 @@ anchors them (`^(...)` and `(...)` respectively).
 
 On every `git push` touching the production branch, the hook computes the range
 since the last reviewed commit (`refs/architect-review/reviewed`, or the merge
-base with `origin/<productionBranch>`), then:
+base with `origin/<productionBranch>`), then requires a review when any of these
+is true:
 
-- any file matching `gate.riskyPaths` in the range → **review required**;
-- else counted lines (added+deleted, excluding `gate.uncounted`) ≥
-  `gate.lineThreshold` → **review required**;
-- else the push is allowed.
+- a changed file matches an **always-review path**: the built-in list (request
+  handlers under `api/`, `routes/`, `controllers/`; the data layer under `db/`,
+  `models/`, `queries/`; migrations; schema files; middleware; any file or folder
+  named for auth, sessions, roles, tenants, payments, billing, pricing, refunds,
+  webhooks, secrets or tokens; CI, `.claude/`, `package.json`, `.env*`, build
+  config) plus anything in `gate.riskyPaths`;
+- an **added line** matches an always-review pattern: the built-in list (`sql.raw`,
+  `eval`/`exec`/`child_process`, `dangerouslySetInnerHTML`, live API keys and
+  private keys, `it.skip`/`.only`, `DROP`/`TRUNCATE`, `eslint-disable`,
+  `@ts-ignore`, `--no-verify`) plus anything in `gate.riskyPatterns`. Test files
+  count here, so a skipped test can't slip through as "uncounted";
+- counted lines (added+deleted, excluding `gate.uncounted`) reach
+  `gate.lineThreshold`.
+
+Otherwise the push is allowed. Project config adds to the built-in lists; set
+`gate.defaultRiskyPaths` or `gate.defaultRiskyPatterns` to `false` to drop one.
+`bash plugins/deploy-discipline/tests/gate.test.sh` checks the decisions.
 
 A PASS stamps the ref to HEAD; the next push only reviews what's new since. Every
 decision is logged to `.git/architect-review.log`.
 
-## Not included / known limits (v0.1)
+## Not included / known limits (v0.2)
 
 - **Stack-flavored, not stack-agnostic.** Build/test/migrate are shell commands
   in config, so other stacks mostly work, but Phase 6 confirmation assumes
   Vercel. Non-Vercel providers fall back to "report the SHA, user confirms."
 - The architect's universal blockers are a floor, not your full rulebook. The
   real enforcement is whatever `review.rulebook` points at.
+- The gate only stops pushes Claude runs (it's a Claude Code hook). A `git push`
+  you type, or one from CI, isn't gated. Add a required CI check for that.
 - `${CLAUDE_PLUGIN_ROOT}` is used to locate the gate script from the skills; if
   your shell doesn't have it set, the skills fall back to a `find` under
   `~/.claude`.

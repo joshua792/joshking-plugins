@@ -13,11 +13,44 @@
 #   override "reason"  records the user's override of a BLOCK (only on their word)
 set -uo pipefail
 
-# ---- Built-in defaults (overridden per project by .claude/deploy.config.json) ----
+# ---- Built-in defaults ------------------------------------------------------
+# A project's .claude/deploy.config.json ADDS to the default risky paths and
+# patterns; it doesn't replace them. Set gate.defaultRiskyPaths or
+# gate.defaultRiskyPatterns to false to drop a default list.
 DEFAULT_LINE_THRESHOLD=40
-DEFAULT_RISKY='^(migrations/|src/lib/db/schema\.ts|src/lib/.*(auth|role|stripe|payment|financial).*\.ts|src/middleware\.ts|src/app/api/(payments|webhooks)/|\.github/|package\.json|next\.config\.ts|vercel\.json)'
 DEFAULT_UNCOUNTED='(\.md$|^e2e/|/__tests__/|^package-lock\.json$)'
 DEFAULT_BRANCH=master
+
+# Paths where any change, however small, gets reviewed. ERE fragments, anchored
+# as ^(a|b|...). Stack-agnostic on purpose: request handlers, the data layer,
+# migrations and schema, middleware, and anything named for auth or money.
+DEFAULT_RISKY_PATHS=(
+  '(.*/)?migrations?/'
+  '(.*/)?(api|routes|controllers|handlers|graphql|trpc)/'
+  '(.*/)?(db|database|repositories|models|queries|dal)/'
+  '(.*/)?schema\.[a-z]+'
+  '(.*/)?middleware\.[jt]s'
+  '(.*/)?[^/]*(auth|session|role|permission|acl|tenant|stripe|payment|billing|invoice|pricing|refund|payout|financial|money|ledger|webhook|secret|crypto|token)[^/]*'
+  '\.github/'
+  '\.claude/'
+  '([^/]*/)*package\.json'
+  '([^/]*/)*\.env[^/]*'
+  '(.*/)?(next|vite|webpack)\.config\.[a-z]+'
+  '([^/]*/)*vercel\.json'
+  '([^/]*/)*Dockerfile'
+)
+
+# Code that gets reviewed wherever it appears, matched against ADDED lines only
+# (test files included). Raw SQL, shell/eval, committed secrets, skipped or
+# focused tests, destructive SQL, suppressed checks.
+DEFAULT_RISKY_PATTERNS=(
+  'sql\.raw\(|[qQ]ueryRawUnsafe|[eE]xecuteRawUnsafe'
+  '(^|[^A-Za-z0-9_.])(eval|exec|execSync|spawn|spawnSync)\(|child_process|dangerouslySetInnerHTML|\.innerHTML *='
+  '(sk|rk)_live_[A-Za-z0-9]{10,}|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|xox[abprs]-[A-Za-z0-9-]{10,}|gh[pousr]_[A-Za-z0-9]{30,}'
+  '(^|[^A-Za-z0-9_])(it|test|describe)\.(skip|only|todo)\(|(^|[^A-Za-z0-9_])x(it|describe|test)\('
+  '(DROP|TRUNCATE) +(TABLE|COLUMN|DATABASE|SCHEMA)|RENAME +COLUMN'
+  'eslint-disable|@ts-ignore|@ts-nocheck|--no-verify'
+)
 
 REVIEW_REF=refs/architect-review/reviewed
 
@@ -25,29 +58,40 @@ cd "$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 LOG="$(git rev-parse --git-common-dir)/architect-review.log"
 CONFIG="$(git rev-parse --show-toplevel)/.claude/deploy.config.json"
 
+join_alt() { local IFS='|'; echo "$*"; }
+
 # Load config (fail-closed on a present-but-unreadable config, so a broken file
 # can't silently disable the gate). A missing config just uses the defaults.
 LINE_THRESHOLD=$DEFAULT_LINE_THRESHOLD
-RISKY=$DEFAULT_RISKY
 UNCOUNTED=$DEFAULT_UNCOUNTED
 PRODUCTION_BRANCH=$DEFAULT_BRANCH
+RISKY_PATHS=("${DEFAULT_RISKY_PATHS[@]}")
+RISKY_PATTERNS=("${DEFAULT_RISKY_PATTERNS[@]}")
 
 load_config() {
   [ -f "$CONFIG" ] || return 0
   command -v jq >/dev/null || return 1
   jq -e . "$CONFIG" >/dev/null 2>&1 || return 1
 
-  local v
+  local v line
   v=$(jq -r '.gate.lineThreshold // empty' "$CONFIG"); [ -n "$v" ] && LINE_THRESHOLD=$v
   v=$(jq -r '.deploy.productionBranch // empty' "$CONFIG"); [ -n "$v" ] && PRODUCTION_BRANCH=$v
 
-  # riskyPaths: array of regex fragments → ^(frag|frag|...). Empty array → match nothing.
+  # Opt-outs for the default lists (explicit false only).
+  [ "$(jq -r '.gate.defaultRiskyPaths' "$CONFIG")" = "false" ] && RISKY_PATHS=()
+  [ "$(jq -r '.gate.defaultRiskyPatterns' "$CONFIG")" = "false" ] && RISKY_PATTERNS=()
+
+  # Project additions: riskyPaths (ERE fragments, anchored for you) and
+  # riskyPatterns (ERE matched against added lines).
   if jq -e '.gate.riskyPaths | type == "array"' "$CONFIG" >/dev/null 2>&1; then
-    local joined
-    joined=$(jq -r '.gate.riskyPaths | join("|")' "$CONFIG")
-    if [ -n "$joined" ]; then RISKY="^($joined)"; else RISKY='$^'; fi
+    while IFS= read -r line; do [ -n "$line" ] && RISKY_PATHS+=("$line"); done \
+      < <(jq -r '.gate.riskyPaths[]' "$CONFIG")
   fi
-  # uncounted: array of regex fragments → (frag|frag|...).
+  if jq -e '.gate.riskyPatterns | type == "array"' "$CONFIG" >/dev/null 2>&1; then
+    while IFS= read -r line; do [ -n "$line" ] && RISKY_PATTERNS+=("$line"); done \
+      < <(jq -r '.gate.riskyPatterns[]' "$CONFIG")
+  fi
+  # uncounted: array of regex fragments → (frag|frag|...). Replaces the default.
   if jq -e '.gate.uncounted | type == "array"' "$CONFIG" >/dev/null 2>&1; then
     local joined
     joined=$(jq -r '.gate.uncounted | join("|")' "$CONFIG")
@@ -55,8 +99,6 @@ load_config() {
   fi
   return 0
 }
-
-export UNCOUNTED  # the awk below reads it from the environment
 
 # The last reviewed commit if HEAD builds on it, else where HEAD left the production branch.
 baseline() {
@@ -69,14 +111,28 @@ baseline() {
   fi
 }
 
-# Sets BASE, LINES, RISKY_FILES, REQUIRED.
+# Sets BASE, LINES, RISKY_FILES, RISKY_HITS, REQUIRED.
 decide() {
+  local risky_re='$^' pattern_re='$^'
+  [ ${#RISKY_PATHS[@]} -gt 0 ] && risky_re="^($(join_alt "${RISKY_PATHS[@]}"))"
+  [ ${#RISKY_PATTERNS[@]} -gt 0 ] && pattern_re="($(join_alt "${RISKY_PATTERNS[@]}"))"
+  export UNCOUNTED PATTERN_RE="$pattern_re"  # the awk below reads them from the environment
+
   BASE=$(baseline)
-  if [ -z "$BASE" ]; then REQUIRED=yes; LINES=0; RISKY_FILES=""; return; fi
+  if [ -z "$BASE" ]; then REQUIRED=yes; LINES=0; RISKY_FILES=""; RISKY_HITS=""; return; fi
   LINES=$(git diff --numstat "$BASE" HEAD |
     awk '$1 != "-" && $3 !~ ENVIRON["UNCOUNTED"] { n += $1 + $2 } END { print n + 0 }')
-  RISKY_FILES=$(git diff --name-only "$BASE" HEAD | grep -E "$RISKY" || true)
-  if [ -n "$RISKY_FILES" ] || [ "$LINES" -ge "$LINE_THRESHOLD" ]; then REQUIRED=yes; else REQUIRED=no; fi
+  RISKY_FILES=$(git diff --name-only "$BASE" HEAD | grep -E "$risky_re" || true)
+  # First added line per file that matches a risky pattern: "path: line".
+  RISKY_HITS=$(git diff -U0 --no-color "$BASE" HEAD |
+    awk '/^\+\+\+ / { f = substr($0, 7); next }
+         /^\+/ && f != "" && substr($0, 2) ~ ENVIRON["PATTERN_RE"] && !(f in seen) {
+           seen[f] = 1; l = substr($0, 2); gsub(/^[ \t]+/, "", l); print f ": " substr(l, 1, 100) }')
+  if [ -n "$RISKY_FILES" ] || [ -n "$RISKY_HITS" ] || [ "$LINES" -ge "$LINE_THRESHOLD" ]; then
+    REQUIRED=yes
+  else
+    REQUIRED=no
+  fi
 }
 
 print_status() {
@@ -87,6 +143,10 @@ print_status() {
   if [ -n "$RISKY_FILES" ]; then
     echo "always-reviewed files touched:"
     printf '%s\n' "$RISKY_FILES" | sed 's/^/  /'
+  fi
+  if [ -n "$RISKY_HITS" ]; then
+    echo "always-reviewed code added:"
+    printf '%s\n' "$RISKY_HITS" | sed 's/^/  /'
   fi
 }
 

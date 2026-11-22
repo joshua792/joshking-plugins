@@ -2,7 +2,7 @@
   "$comment": "Copy to <your project>/.claude/deploy.config.json and edit. This example mirrors JerseyOps; every value is project-specific. Omit a key to accept the plugin's built-in default (see hooks/architect-review-gate.sh and the skills).",
 
   "gate": {
-    "$comment": "Drives the push gate. lineThreshold = counted (added+deleted) lines since the last review that force one. riskyPaths/uncounted are arrays of ERE regex fragments (anchored for you: riskyPaths is wrapped in ^(...), uncounted in (...)).",
+    "$comment": "Drives the push gate. lineThreshold = counted (added+deleted) lines since the last review that force one. riskyPaths ADDS to the built-in always-review paths (API/route handlers, data layer, migrations, schema, middleware, anything named for auth or money; see hooks/architect-review-gate.sh); a touched file matching either list forces review at any size. riskyPatterns ADDS to the built-in code patterns matched against added lines (sql.raw, eval/exec, live keys, it.skip/.only, DROP/TRUNCATE, eslint-disable/@ts-ignore). Set defaultRiskyPaths or defaultRiskyPatterns to false to drop a built-in list. riskyPaths/uncounted are ERE fragments (anchored for you: riskyPaths in ^(...), uncounted in (...)); uncounted replaces its default.",
     "lineThreshold": 40,
     "riskyPaths": [
       "migrations/",
@@ -18,6 +18,9 @@
       "package\\.json",
       "next\\.config\\.ts",
       "vercel\\.json"
+    ],
+    "riskyPatterns": [
+      "\\.set\\(\\{ *status:"
     ],
     "uncounted": ["\\.md$", "^e2e/", "/__tests__/", "^package-lock\\.json$"]
   },
