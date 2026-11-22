@@ -67,6 +67,11 @@ prompt below (fill in `<range>`, `<repo path>`, `<rulebook>`) and wait for it.
 >    importer, dispatcher, state-machine bypass) — cite the canonical path.
 > 6. New behavior in a risky area (the `gate.riskyPaths`, API routes, the data
 >    layer) with no test covering it.
+> 7. A correctness bug you can demonstrate, even if no rule names it: wrong
+>    results, lost or corrupted data, a crash, or money or state ending up wrong.
+>    Block only when you can name the concrete input or sequence that triggers it
+>    and what happens (e.g. "`pageWindow(2, 500)` returns offset 500, so rows
+>    100-499 are never returned"). If you can't name a trigger, it's a grumble.
 >
 > **GRUMBLES** (reported, never block): duplication, a file past ~500 lines,
 > leaky abstractions, over-engineering, dead code, unclear names, a lying
