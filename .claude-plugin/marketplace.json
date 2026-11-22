@@ -1,0 +1,15 @@
+{
+  "name": "joshking-plugins",
+  "owner": { "name": "Joshua King" },
+  "metadata": {
+    "description": "Joshua King's Claude Code plugins.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "deploy-discipline",
+      "source": "./plugins/deploy-discipline",
+      "description": "A review-gated deploy workflow for Next.js / Vercel / Neon / Drizzle projects. Ports JerseyOps's /deploy + /architect-review + push gate into a reusable plugin driven by a per-project config file."
+    }
+  ]
+}

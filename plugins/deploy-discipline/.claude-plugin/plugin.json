@@ -1,0 +1,7 @@
+{
+  "name": "deploy-discipline",
+  "version": "0.1.0",
+  "description": "Review-gated deploy workflow for Next.js / Vercel / Neon / Drizzle projects: /deploy runs commit → architect-review gate → test gate → build gate → migration gate → push → confirm → changelog, and a PreToolUse hook blocks pushing the production branch until the change passes review. All project specifics come from .claude/deploy.config.json.",
+  "author": { "name": "Joshua King" },
+  "keywords": ["deploy", "ci", "code-review", "nextjs", "vercel", "neon", "drizzle"]
+}

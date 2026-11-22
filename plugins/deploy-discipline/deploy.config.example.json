@@ -1,0 +1,71 @@
+{
+  "$comment": "Copy to <your project>/.claude/deploy.config.json and edit. This example mirrors JerseyOps; every value is project-specific. Omit a key to accept the plugin's built-in default (see hooks/architect-review-gate.sh and the skills).",
+
+  "gate": {
+    "$comment": "Drives the push gate. lineThreshold = counted (added+deleted) lines since the last review that force one. riskyPaths/uncounted are arrays of ERE regex fragments (anchored for you: riskyPaths is wrapped in ^(...), uncounted in (...)).",
+    "lineThreshold": 40,
+    "riskyPaths": [
+      "migrations/",
+      "src/lib/db/schema\\.ts",
+      "src/lib/(db/)?financial-log\\.ts",
+      "src/lib/(auth|auth-helpers|cron-auth|role-guards|role-permissions|stripe|payment-status)\\.ts",
+      "src/middleware\\.ts",
+      "src/lib/(order-status|store-status|board-move|order-move)\\.ts",
+      "src/app/api/(payments|webhooks)/",
+      "eslint-plugin-jerseyops/",
+      "\\.github/",
+      "\\.claude/",
+      "package\\.json",
+      "next\\.config\\.ts",
+      "vercel\\.json"
+    ],
+    "uncounted": ["\\.md$", "^e2e/", "/__tests__/", "^package-lock\\.json$"]
+  },
+
+  "commit": {
+    "$comment": "types the commit skill may use; attribution appended to every commit body.",
+    "types": ["feat", "fix", "refactor", "test", "docs", "chore", "style"],
+    "attribution": "Co-Authored-By: Claude <noreply@anthropic.com>"
+  },
+
+  "review": {
+    "$comment": "rulebook = the file the architect reads as this project's law (its Key Concepts / Coding Conventions). Beyond the universal blockers the skill always enforces, the architect blocks on violations of THIS file.",
+    "rulebook": "CLAUDE.md"
+  },
+
+  "test": {
+    "$comment": "command = full test run for this change. The skill prefers the project's own /test skill if one exists; this is the fallback. baseline = ref whose failures are pre-existing (don't fail the gate).",
+    "command": "npx vitest run",
+    "e2eCommand": "E2E_BUILD=1 npx playwright test",
+    "baseline": "origin/master"
+  },
+
+  "build": {
+    "$comment": "Typecheck + build of the COMMITTED tree. envFile is copied in as .env.local for a production-faithful build; omit if not needed.",
+    "command": "npx tsc --noEmit -p . && npx next build",
+    "envFile": ".env.prod.local"
+  },
+
+  "migrate": {
+    "$comment": "Runs only when the commit touches schema/migration paths. e2e first, then production from the committed tree. statusCommand must report pending:0. Omit this whole block for projects without migrations.",
+    "command": "npx tsx scripts/db-migrate.ts up",
+    "e2eCommand": "npx tsx scripts/db-migrate.ts up --env .env.e2e",
+    "statusCommand": "npx tsx scripts/db-migrate.ts status",
+    "schemaPaths": ["src/lib/db/schema.ts", "migrations/"],
+    "requireAdditive": true
+  },
+
+  "deploy": {
+    "$comment": "productionBranch is the branch whose push deploys (the gate watches it). provider + the ids drive Phase 6 confirmation via the Vercel MCP tools.",
+    "productionBranch": "master",
+    "provider": "vercel",
+    "vercelProjectId": "prj_xxxxxxxxxxxxxxxxxxxxxxxx",
+    "vercelTeamId": "team_xxxxxxxxxxxxxxxxxxxx",
+    "productionUrl": "https://example.com"
+  },
+
+  "changelog": {
+    "$comment": "path = file to append one entry per deploy. Omit to skip Phase 7.",
+    "path": "CHANGELOG.md"
+  }
+}
