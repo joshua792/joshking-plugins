@@ -107,7 +107,9 @@ decision is logged to `.git/architect-review.log`.
 - **Stack-flavored, not stack-agnostic.** Build/test/migrate are shell commands
   in config, so other stacks mostly work, but Phase 6 confirmation assumes
   Vercel. Non-Vercel providers fall back to "report the SHA, user confirms."
-- The architect's universal blockers are a floor, not your full rulebook. The
+- The architect's universal blockers are a floor, not your full rulebook. Since
+  v0.2 that floor includes any correctness bug the reviewer can show with a
+  concrete triggering input. The
   real enforcement is whatever `review.rulebook` points at.
 - The gate only stops pushes Claude runs (it's a Claude Code hook). A `git push`
   you type, or one from CI, isn't gated. Add a required CI check for that.
